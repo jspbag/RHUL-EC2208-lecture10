@@ -1,0 +1,331 @@
+---
+pagetitle: Stochastic trends and spurious regressions
+output: 
+  revealjs::revealjs_presentation:
+    incremental: false
+    theme: solarized
+    self_contained: false
+    reveal_plugins: ["notes","chalkboard"]
+    # reveal_plugins: ["menu"]
+    highlight: pygments
+    center: true
+    transition: none
+    background_transition: none 
+    reveal_options:
+      # chalkboard:
+      #   theme: whiteboard
+      #   toggleNotesButton: true
+      #   toggleChalkboardButton: true
+      menu:
+        numbers: true
+      slideNumber: true
+      previewLinks: false
+    fig_caption: true
+    pandoc_args:
+    - --indented-code-classes
+    - lineNumbers
+    css: mystyle.css
+    
+--- 
+
+<section>
+
+<h1>Stochastic trends and spurious regressions</h1>
+
+Based on Stock and Watson, ch. 15
+
+<br>
+
+<h2>[Jesper Bagger](mailto:jesper.bagger@rhul.ac.uk)</h2>
+
+<h3>EC2208 | Royal Holloway | 2021/22</h3>
+
+</section>
+
+```{r results='asis', echo=FALSE, include=FALSE}
+library(AER) # load Applied Econometrics with R library
+library(parameters) # Load parameters library for robust SE computation
+library(quantmod) # Load quantmod library for time series analysis
+library(readxl) # Load readxl to load spreadsheet data
+library(stats) # Load stats to compute acf functions
+library(scales) # Load scales to be used in plots
+library(dynlm) # Load dynlm to estimate higher-order autoregressions
+```
+
+# Trends
+
+## Trends
+
+- A trend is a persistent long-term movement in a variable over time; a time series fluctuates around its trend
+
+```{r echo=FALSE, error=FALSE, warning=FALSE, message = FALSE, out.width = "70%"}
+# load US macroeconomic data
+usmac_qt <- read_xlsx("us_macro_quarterly.xlsx", sheet = 1, col_types = c("text", rep("numeric", 9)))
+# Fix format of date
+usmac_qt$...1 <- as.yearqtr(usmac_qt$...1, format = "%Y:0%q")
+# Relabel column names in dataframe
+colnames(usmac_qt) <- c("Date", "GDPC96", "JAPAN_IP", "PCECTPI", 
+                        "GS10", "GS1", "TB3MS", "UNRATE", "EXUSUK", "CPIAUCSL")
+# GDP series as xts object
+GDP <- xts(usmac_qt$GDPC96, usmac_qt$Date)["1960::2013"]
+# GDP growth series as xts object
+GDPGrowth <- xts(400 * log(GDP/lag(GDP)))
+
+# Plot US quarterly GDP time series
+plot(log(as.zoo(GDP)),
+     col = "blue",
+     lwd = 2,
+     ylab = "Logarithm",
+     xlab = "Date",
+     main = "U.S. Quarterly Real GDP")
+```
+
+## Deterministic and stochastic trends
+
+- A deterministic trend is a nonrandom function of time $t$; a linear trend is a deterministic trend:
+
+  $$Y_t = \alpha + \delta t + \beta_1 Y_{t-1} + u_t$$
+- Deterministic trends typically adds no complications to inference and forecasting
+  
+- Stochastic trends are random and varies over time:  may be growing for a while, and then start falling
+
+- Stochastic trends complicate inference and forecasting, but often more appropriate for economic time series 
+
+## Random walk
+
+- The random walk model is a simple and versatile way of introducing a stochastic trend to a time series model
+
+- $Y$ follows a random walk if changes in $Y$ are i.i.d.:
+
+  $$\Delta Y_t = u_t \Leftrightarrow Y_t = Y_{t-1} + u_t,$$
+  
+  where $u_t$ is i.i.d. and $E(u_t|Y_{t-1},Y_{t-2},...) = 0$
+
+- $Y_t$ is produced by a "random step" $u_t$ from last period's position $Y_{t-1}$; hence, the "random walk" label!
+
+- A random walk is *nonstationary* because the variance increases over time (see pre-recorded lecture)
+
+## A simulated random walk
+
+$$Y_t = Y_{t-1} + u_t; \quad u_t \sim \mathcal{N}(0,1); \quad Y_0 = 0$$
+
+```{r echo=FALSE, error=FALSE, warning=FALSE, message = FALSE, out.width = "70%"}
+# Set seed for random number generator
+set.seed(4368405)
+# Draw innovation from N(0,1)
+u <- rnorm(999, mean = 0, sd = 1)
+# Start the process at Y_0 = 0
+rw1 <- rep(0,1000)
+tvec <- rep(0,length(rw1))
+for(t in 2:length(rw1)) {
+  # Element t of rw is element t-1 + a standard normal variate
+  rw1[t] <- rw1[t-1] + u[t]
+  tvec[t] <- t  
+}
+
+# Plot US quarterly GDP time series
+plot(tvec,rw1,
+     type = "l",
+     col = "blue",
+     lwd = 2,
+     ylab = "Y",
+     xlab = "t")
+```
+
+## A "real life" random walk?
+
+```{r echo=FALSE, error=FALSE, warning=FALSE, out.width = "70%"}
+usunemp <- xts(usmac_qt$UNRATE, usmac_qt$Date)["1960::2013"]
+# Plot US quarterly unemployment rate series
+plot(as.zoo(usunemp),
+     col = "blue",
+     lwd = 2,
+     ylab = "Percent",
+     xlab = "Date",
+     main = "US Unemployment Rate")
+```
+
+## Random walk with a drift
+
+- An persistent upward (or downward) tendency is hard to capture in the pure random walk
+
+- Add a *drift* $\beta_0$ to the pure random walk model:
+
+  $$\Delta Y_t = \beta_0 + u_t \Leftrightarrow Y_t = \beta_0 + Y_{t-1} + u_t,$$
+  
+  where $u_t$ is i.i.d. and $E(u_t|Y_{t-1},Y_{t-2},...) = 0$
+
+- $Y_t$ is produced by a "random step" $\beta_0 + u_t$ from last period's position $Y_{t-1}$
+
+- $\beta_0 >0$: upwards drift; $\beta_0 <0$: downwards drift
+
+## Simulated random walks with drifts
+
+$$Y_t = \beta_0 + Y_{t-1} + u_t; \quad u_t \sim \mathcal{N}(0,1); \quad Y_0 = 0$$
+
+```{r echo=FALSE, error=FALSE, warning=FALSE, message = FALSE, out.width = "70%"}
+# Start the process at Y_0 = 0
+rw2 <- rep(0,length(rw1))
+rw3 <- rep(0,length(rw1))
+for(t in 2:length(rw1)) {
+  # Element t of rw2 is element t-1 + positive drift + a standard normal variate
+  rw2[t] <- rw2[t-1] + 0.05 + u[t]
+  # Element t of rw3 is element t-1 + negative drift + a standard normal variate
+  rw3[t] <- rw3[t-1] - 0.05 + u[t]
+}
+
+# Plot US quarterly GDP time series
+plot(tvec,rw1,
+     type = "l",
+     col = "blue",
+     lwd = 2,
+     ylab = "Y",
+     xlab = "t",
+     ylim = c(-50, 100))
+lines(tvec,rw2,col = "red", lwd = 2)
+lines(tvec,rw3,col = "green", lwd = 2)
+legend("bottomright", inset = 0.02, c("Pure random walk", "Random walk w/ positive drift", "Random walk w/ negative drift"), col=c("blue","red","green"), lty=c(1,1,1), lwd = c(2,2,2))
+```
+
+## Unit roots
+
+- The $AR(1)$-model is $Y_t = \beta_0 + \beta_1 Y_{t-1} + u_t$; hence, a random walk is an $AR(1)$-model with $\beta=1$
+
+- An $AR(1)$-model with $\beta=1$ is said to have a *unit root* 
+
+  (because the socalled characteristic polynomial of the $AR(1)$-model, $1-\beta_1 z$, in that case has root $z = 1$)
+  
+- *Unit root process*, *random walk process*, and *stochastic trend* all refer to $Y_t = \beta_0 + Y_{t-1} + u_t$ with $u_t$ i.i.d.
+
+# Problems with stochastic trends
+
+## Non-normal sampling distributions
+
+- Consider the $AR(1)$ model
+
+  $$Y_t = \beta_0 + \beta_1 Y_{t-1} + u_t$$
+  
+  w/ $u_t$ i.i.d. and $E[u_t|Y_{t-1},Y_{t-2},...]=0$
+  
+- If it is in fact the case that $\beta_1 = 1$, then
+
+  - $\hat{\beta}$ severely biased towards 0 for small $T$
+
+  - Distribution of $\hat{\beta}$ not normal, even for large $T$
+  
+- Problematic for constructing forecasts, forecast intervals, and for testing hypotheses involving $\beta_1$
+
+
+## Spurious regression
+
+- Two nonstationary time series may appear related, when in fact they are not! This is called spurious regression
+
+- If used in a forecast context, spurious regressions lead to biased forecasts
+
+## JPN Industrial Production and US unemployment 1962-1985
+
+```{r echo=FALSE, error=FALSE, warning=FALSE, out.width = "90%"}
+JPindprod <- xts(log(usmac_qt$JAPAN_IP), usmac_qt$Date)["1960::2013"]
+
+par(mfrow=c(1,2))
+
+# Plot US quarterly unemployment rate series
+plot(as.zoo(usunemp),
+     col = "blue",
+     lwd = 1,
+     lty = "dashed",
+     ylab = "Percent",
+     xlab = "Date",
+     main = "US Unemployment Rate")
+lines(as.zoo(usunemp["1962::1985"]), lwd = 2, col = "blue")
+
+# Plot Japanese Industrial Production index series
+plot(as.zoo(log(JPindprod)),
+     col = "blue",
+     lwd = 1,
+     lty = "dashed",
+     ylab = "Logarithm",
+     xlab = "Date",
+     main = "Log JPN Industrial Production Index")
+lines(as.zoo(log(JPindprod["1962::1985"])), lwd = 2, col = "blue")
+```
+
+## JPN Industrial Production and US unemployment 1962-1985
+
+```{r echo=TRUE, error=FALSE, warning=FALSE, out.width = "70%"}
+us.u.62.85 <- na.omit(as.numeric(usunemp["1962::1985"]))
+jpn.logindu.62.85 <- na.omit(as.numeric(log(JPindprod["1962::1985"])))
+reg.62.85 <- lm(us.u.62.85 ~ jpn.logindu.62.85)
+summary(reg.62.85)
+```
+
+## JPN Industrial Production and US unemployment 1986-2013
+
+```{r echo=FALSE, error=FALSE, warning=FALSE, out.width = "90%"}
+JPindprod <- xts(log(usmac_qt$JAPAN_IP), usmac_qt$Date)["1960::2013"]
+
+par(mfrow=c(1,2))
+
+# Plot US quarterly unemployment rate series
+plot(as.zoo(usunemp),
+     col = "blue",
+     lwd = 1,
+     lty = "dashed",
+     ylab = "Percent",
+     xlab = "Date",
+     main = "US Unemployment Rate")
+lines(as.zoo(usunemp["1986::2013"]), lwd = 2, col = "blue")
+
+# Plot Japanese Industrial Production index series
+plot(as.zoo(log(JPindprod)),
+     col = "blue",
+     lwd = 1,
+     lty = "dashed",
+     ylab = "Logarithm",
+     xlab = "Date",
+     main = "Log JPN Industrial Production Index")
+lines(as.zoo(log(JPindprod["1986::2013"])), lwd = 2, col = "blue")
+```
+
+## JPN Industrial Production and US unemployment 1986-2013
+
+```{r echo=TRUE, error=FALSE, warning=FALSE, out.width = "70%"}
+us.u.86.13 <- as.numeric(usunemp["1986::2013"])
+jpn.logindu.86.13 <- as.numeric(log(JPindprod["1986::2013"]))
+reg.86.13 <- lm(us.u.86.13 ~ jpn.logindu.86.13)
+summary(reg.86.13)
+```
+
+## Common stochastic trends and cointegration
+
+- The special case where two series share the *same* stochastic trend is interesting
+
+- If two series have a common stochcastic trend, we say the series are cointegrated
+
+- For cointegrated series it is possible to run reliable, i.e. nonspurious, regressions (not EC2208 material)
+
+## How to deal with nonstationary time series
+
+- If a series looks nonstationary, worry about the presence of stochastic trends
+
+- If the stochastic trend is a random walk, the first differenced series will be stationary:
+
+  $$Y_t = Y_{t-1} + u_t \Leftrightarrow \Delta Y_t = u_t$$
+
+- There are formal statistical tests for nonstationary (Dickey-Fuller tests). Problem set 10 will walk you through the Dickey-Fuller test for nonstationarity. 
+
+
+# Summary
+
+## Summary
+
+- A time series with a trend is nonstationary
+
+- There are two types of trends: deterministic and stochastic
+
+- It is reasonable and prudent to treat trends in economic time series as stochastic
+
+- The random walk model is a simple yet versatile model for nonstationary time series
+
+- Regressions w/ time series data requires attention to the stationarity. Regression analysis can be misleading unless series are stationary or cointegrated
+
